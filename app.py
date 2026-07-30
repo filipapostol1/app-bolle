@@ -1,14 +1,33 @@
 from datetime import datetime
-import json
 import os
-from fpdf import FPDF
+import sqlite3
+import pandas as pd
 import requests
 import streamlit as st
+from fpdf import FPDF
 
 # ==========================================
-# 1. FUNZIONI DI SUPPORTO E PULIZIA
+# 1. DATABASE SQLITE & PULIZIA
 # ==========================================
-FILE_CRONOLOGIA = "cronologia.json"
+DB_NAME = "gestionale.db"
+
+
+def init_db():
+    """Inizializza il database SQLite se non esiste."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cronologia (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            data TEXT,
+            azione TEXT,
+            cliente TEXT,
+            dettaglio TEXT,
+            importo TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
 
 
 def pulisci(testo):
@@ -35,88 +54,99 @@ def pulisci(testo):
 
 
 def carica_cronologia():
-    if os.path.exists(FILE_CRONOLOGIA):
-        with open(FILE_CRONOLOGIA, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return []
+    """Carica la cronologia dal database SQLite."""
+    init_db()
+    conn = sqlite3.connect(DB_NAME)
+    df = pd.read_sql_query(
+        "SELECT data as Data, azione as Azione, cliente as Cliente, dettaglio as Dettaglio, importo as Importo FROM cronologia ORDER BY id DESC",
+        conn,
+    )
+    conn.close()
+    return df
 
 
 def salva_cronologia(azione, cliente, dettaglio, importo="-"):
-    storico = carica_cronologia()
-    nuovo_record = {
-        "Data": datetime.now().strftime("%d/%m/%Y %H:%M"),
-        "Azione": azione,
-        "Cliente": cliente,
-        "Dettaglio": dettaglio,
-        "Importo": importo,
-    }
-    storico.insert(0, nuovo_record)
-    with open(FILE_CRONOLOGIA, "w", encoding="utf-8") as f:
-        json.dump(storico, f, indent=4, ensure_ascii=False)
+    """Salva una nuova operazione nel database SQLite."""
+    init_db()
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO cronologia (data, azione, cliente, dettaglio, importo)
+        VALUES (?, ?, ?, ?, ?)
+    """,
+        (
+            datetime.now().strftime("%d/%m/%Y %H:%M"),
+            azione,
+            cliente,
+            dettaglio,
+            importo,
+        ),
+    )
+    conn.commit()
+    conn.close()
 
 
 # ==========================================
-# 2. API GRATUITA PER CALCOLO PERCORSI
+# 2. API PER CALCOLO PERCORSI E PEDAGGI
 # ==========================================
-def calcola_distanza_api(partenza, arrivo):
-    headers = {"User-Agent": "TruckApp/1.0"}
+def calcola_distanza_api(partenza, arrivo, moltiplicatore_pedaggio=0.17):
+    headers = {"User-Agent": "TruckApp/1.0 (contact: info@truckapp.local)"}
     try:
-        # 1. Trova coordinate partenza
+        # 1. Coordinate partenza
         res_p = requests.get(
             f"https://nominatim.openstreetmap.org/search?q={partenza}&format=json&limit=1",
             headers=headers,
+            timeout=5,
         ).json()
-        # 2. Trova coordinate arrivo
+        # 2. Coordinate arrivo
         res_a = requests.get(
             f"https://nominatim.openstreetmap.org/search?q={arrivo}&format=json&limit=1",
             headers=headers,
+            timeout=5,
         ).json()
 
         if res_p and res_a:
             lat1, lon1 = res_p[0]["lat"], res_p[0]["lon"]
             lat2, lon2 = res_a[0]["lat"], res_a[0]["lon"]
-            # 3. Calcola i KM reali di guida
+            # 3. KM reali di guida via OSRM
             url_route = f"http://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}?overview=false"
-            res_route = requests.get(url_route).json()
-            km = round(res_route["routes"][0]["distance"] / 1000.0, 1)
-            # Calcolo pedaggio stimato per camion (circa 0.17€ al km)
-            pedaggio = round((km * 0.80) * 0.17, 2)
-            return km, pedaggio
+            res_route = requests.get(url_route, timeout=5).json()
+
+            if "routes" in res_route and len(res_route["routes"]) > 0:
+                km = round(res_route["routes"][0]["distance"] / 1000.0, 1)
+                # Calcolo pedaggio condizionato dal tipo di veicolo
+                pedaggio = round((km * 0.80) * moltiplicatore_pedaggio, 2)
+                return km, pedaggio
     except Exception:
         return None, None
     return None, None
 
 
 # ==========================================
-# 3. CLASSE PDF AVANZATA (MODELLO GRAFICO)
+# 3. PDF BOLLA CMR (NON TOCCATO)
 # ==========================================
 class MioPDF(FPDF):
 
     def disegna_cella_sezione(self, x, y, w, h, titolo, valore="", bg_hdr=True):
-        """Disegna una cella strutturata con intestazione grigia ed etichetta in evidenza."""
-        # Rettangolo esterno della cella
         self.set_line_width(0.3)
         self.set_draw_color(60, 60, 60)
         self.rect(x, y, w, h)
 
-        # Barra di intestazione cella
         if bg_hdr:
             self.set_fill_color(240, 242, 245)
             self.rect(x, y, w, 5, "F")
             self.line(x, y + 5, x + w, y + 5)
 
-        # Testo Intestazione
         self.set_xy(x + 1.5, y + 0.8)
         self.set_font("Helvetica", "B", 6.5)
         self.set_text_color(50, 50, 50)
         self.cell(w - 3, 3.5, pulisci(titolo.upper()), ln=0)
 
-        # Contenuto Valore
         if valore:
             self.set_xy(x + 2, y + 5.5)
             self.set_font("Helvetica", "B", 8.5)
             self.set_text_color(0, 0, 0)
-            # Gestione eventuale testo multilinea
             self.multi_cell(
                 w - 4, 3.8, pulisci(valore), border=0, align="L"
             )
@@ -128,10 +158,7 @@ def crea_pdf_bolla(dati):
     pdf.add_page()
     pdf.set_auto_page_break(False)
 
-    # ---------------------------------------------------------
-    # INTESTAZIONE PRINCIPALE DOCUMENTO
-    # ---------------------------------------------------------
-    pdf.set_fill_color(26, 82, 118)  # Blu Scuro Elegante
+    pdf.set_fill_color(26, 82, 118)
     pdf.rect(10, 10, 190, 16, "F")
 
     pdf.set_xy(12, 12)
@@ -157,10 +184,6 @@ def crea_pdf_bolla(dati):
         align="R",
     )
 
-    # ---------------------------------------------------------
-    # SCHEMA E GRIGLIA PRINCIPALE (Y: 28 -> 192)
-    # ---------------------------------------------------------
-    # Riga 1: Dati Operativi Generali (Y=28, H=12)
     pdf.disegna_cella_sezione(
         10, 28, 45, 12, "Data e Ora Ritiro", f"{dati['data']} - {dati['ora']}"
     )
@@ -174,7 +197,6 @@ def crea_pdf_bolla(dati):
         145, 28, 55, 12, "Booking / Riferimento", dati.get("booking", "N/A")
     )
 
-    # Riga 2: Committente vs Vettore (Y=41, H=22)
     pdf.disegna_cella_sezione(
         10, 41, 93, 22, "1. Committente / Mittente", dati["committente"]
     )
@@ -182,7 +204,6 @@ def crea_pdf_bolla(dati):
         103, 41, 97, 22, "2. Vettore / Trasportatore", dati["vettore"]
     )
 
-    # Riga 3: Ritiro vs Autista & Mezzi (Y=64, H=22)
     pdf.disegna_cella_sezione(
         10,
         64,
@@ -199,7 +220,6 @@ def crea_pdf_bolla(dati):
         103, 64, 97, 22, "4. Conducente & Automezzo", info_mezzo
     )
 
-    # Riga 4: Scarico vs Dettagli Container (Y=87, H=22)
     pdf.disegna_cella_sezione(
         10, 87, 93, 22, "5. Luogo di Consegna / Scarico", dati["scarico"]
     )
@@ -211,7 +231,6 @@ def crea_pdf_bolla(dati):
         103, 87, 97, 22, "6. Identificativo Container & Peso", info_cnt
     )
 
-    # Riga 5: Descrizione Merce (Y=110, H=20)
     pdf.disegna_cella_sezione(
         10,
         110,
@@ -220,8 +239,6 @@ def crea_pdf_bolla(dati):
         "7. Natura della Merce e Tipologia Imballo",
         dati["merce"],
     )
-
-    # Riga 6: Note e Osservazioni di Viaggio (Y=131, H=22)
     pdf.disegna_cella_sezione(
         10,
         131,
@@ -231,15 +248,11 @@ def crea_pdf_bolla(dati):
         dati["note"],
     )
 
-    # ---------------------------------------------------------
-    # DIRETTIVE SOTTO LO SCHEMA & CONDIZIONI DI TRASPORTO (Y: 155 -> 240)
-    # ---------------------------------------------------------
     pdf.set_fill_color(245, 245, 245)
     pdf.rect(10, 155, 190, 80)
     pdf.set_line_width(0.3)
     pdf.rect(10, 155, 190, 80)
 
-    # Titolo Sezione Direttive
     pdf.set_xy(13, 157)
     pdf.set_font("Helvetica", "B", 8)
     pdf.set_text_color(26, 82, 118)
@@ -251,10 +264,8 @@ def crea_pdf_bolla(dati):
     )
     pdf.line(13, 162, 197, 162)
 
-    # Testo delle Direttive Operative e Legali
     pdf.set_font("Helvetica", "", 6.8)
     pdf.set_text_color(40, 40, 40)
-
     direttive_testo = (
         "1. NORMATIVA APPLICABILE: Il presente trasporto e' regolato dalle norme del Codice Civile italiano (Art. 1696 e succ.) "
         "e, per i trasporti internazionali, dalla Convenzione relativo al contratto di trasporto internazionale di merci su strada (CMR).\n"
@@ -265,11 +276,9 @@ def crea_pdf_bolla(dati):
         "4. RESA E CONSEGNA: La merce viaggia a rischio del committente salvo i casi di responsabilita' imputabile al vettore ai sensi di legge. "
         "La merce si intende consegnata nello stato in cui si trova, con riserva di riscontro entro i termini stabiliti."
     )
-
     pdf.set_xy(13, 164)
     pdf.multi_cell(184, 3.2, pulisci(direttive_testo), border=0, align="J")
 
-    # Spazio Direttive Specifiche del Committente (Se presenti)
     pdf.set_xy(13, 202)
     pdf.set_font("Helvetica", "B", 7.5)
     pdf.set_text_color(0, 0, 0)
@@ -291,13 +300,9 @@ def crea_pdf_bolla(dati):
     )
     pdf.multi_cell(184, 3.2, pulisci(istruzioni_extra), border=0, align="L")
 
-    # ---------------------------------------------------------
-    # FIRME DI CONVALIDA E RICEVUTA (Y: 238 -> 282)
-    # ---------------------------------------------------------
     h_firme = 38
     y_firme = 238
 
-    # Box Firma Mittente
     pdf.rect(10, y_firme, 60, h_firme)
     pdf.set_xy(12, y_firme + 2)
     pdf.set_font("Helvetica", "B", 7)
@@ -306,7 +311,6 @@ def crea_pdf_bolla(dati):
     pdf.set_font("Helvetica", "", 6)
     pdf.cell(56, 3, "Data e Ora: ____/____/________  ___:___", align="C")
 
-    # Box Firma Vettore
     pdf.rect(75, y_firme, 60, h_firme)
     pdf.set_xy(77, y_firme + 2)
     pdf.set_font("Helvetica", "B", 7)
@@ -315,7 +319,6 @@ def crea_pdf_bolla(dati):
     pdf.set_font("Helvetica", "", 6)
     pdf.cell(56, 3, "Per presa in carico della merce", align="C")
 
-    # Box Firma Destinatario
     pdf.rect(140, y_firme, 60, h_firme)
     pdf.set_xy(142, y_firme + 2)
     pdf.set_font("Helvetica", "B", 7)
@@ -330,7 +333,6 @@ def crea_pdf_bolla(dati):
     pdf.set_font("Helvetica", "", 6)
     pdf.cell(56, 3, "Data e Ora: ____/____/________  ___:___", align="C")
 
-    # Output in byte per lo scarico tramite Streamlit
     out = pdf.output(dest="S")
     return (
         bytes(out)
@@ -339,41 +341,123 @@ def crea_pdf_bolla(dati):
     )
 
 
+# ==========================================
+# 4. PREVENTIVO PDF (COMPLETAMENTE RIDISEGNATO)
+# ==========================================
 def crea_pdf_preventivo(dati):
-    pdf = FPDF()
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_margins(15, 15, 15)
     pdf.add_page()
 
+    # Intestazione Professionale Blu
+    pdf.set_fill_color(26, 82, 118)
+    pdf.rect(15, 15, 180, 22, "F")
+
+    pdf.set_xy(20, 19)
     pdf.set_font("Helvetica", "B", 16)
-    pdf.text(10, 20, "PREVENTIVO DI TRASPORTO")
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(100, 6, "PREVENTIVO DI TRASPORTO", ln=0)
 
-    pdf.set_font("Helvetica", "", 10)
-    pdf.text(10, 30, f"Data: {datetime.now().strftime('%d/%m/%Y')}")
-    pdf.text(10, 40, f"Cliente: {pulisci(dati['cliente'])}")
+    pdf.set_xy(120, 19)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(70, 6, f"Data: {datetime.now().strftime('%d/%m/%Y')}", ln=1, align="R")
 
+    pdf.set_xy(20, 26)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_text_color(210, 230, 250)
+    pdf.cell(100, 5, pulisci(f"Rif: OFF-{datetime.now().strftime('%Y%m%d%H%M')}"), ln=0)
+
+    # Riquadro Cliente & Dati Viaggio
+    pdf.set_xy(15, 43)
+    pdf.set_fill_color(248, 249, 250)
+    pdf.rect(15, 43, 180, 28, "F")
+    pdf.set_draw_color(210, 215, 220)
+    pdf.rect(15, 43, 180, 28)
+
+    pdf.set_xy(20, 46)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(26, 82, 118)
+    pdf.cell(85, 5, "COMMITTENTE / CLIENTE", ln=0)
+    pdf.cell(85, 5, "DETTAGLI ITINERARIO", ln=1)
+
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(40, 40, 40)
+
+    pdf.set_xy(20, 53)
+    pdf.cell(85, 5, pulisci(dati["cliente"]), ln=0)
     tipo_v = "Andata e Ritorno" if dati["is_ritorno"] else "Solo Andata"
-    pdf.text(
-        10,
-        50,
-        f"Tratta: {pulisci(dati['partenza'])} - {pulisci(dati['arrivo'])} ({tipo_v})",
+    pdf.cell(85, 5, pulisci(f"Tratta: {dati['partenza']} -> {dati['arrivo']}"), ln=1)
+
+    pdf.set_xy(20, 60)
+    pdf.cell(85, 5, "Servizio Trasporto Merci", ln=0)
+    pdf.cell(85, 5, pulisci(f"Tipologia: {tipo_v} | Mezzo: {dati.get('tipo_mezzo', 'Standard')}"), ln=1)
+
+    # Tabella Dettaglio Costi
+    pdf.set_xy(15, 78)
+    pdf.set_fill_color(26, 82, 118)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 9)
+
+    pdf.cell(95, 8, pulisci(" DESCRIZIONE SERVIZIO"), border=1, fill=True)
+    pdf.cell(45, 8, pulisci("PARAMETRI"), border=1, fill=True, align="C")
+    pdf.cell(40, 8, pulisci("IMPORTO (EUR)"), border=1, fill=True, align="R")
+    pdf.ln()
+
+    pdf.set_text_color(40, 40, 40)
+    pdf.set_font("Helvetica", "", 9)
+
+    # Riga 1: Trasporto
+    pdf.set_x(15)
+    pdf.cell(95, 8, pulisci(f" Quota Trasporto ({tipo_v})"), border=1)
+    pdf.cell(45, 8, pulisci(f"{dati['km']} Km x {dati['tariffa']:.2f} EUR"), border=1, align="C")
+    pdf.cell(40, 8, f"{dati['costo_viaggio']:.2f} EUR", border=1, align="R")
+    pdf.ln()
+
+    # Riga 2: Pedaggi
+    pdf.set_x(15)
+    pdf.cell(95, 8, pulisci(" Stima Pedaggi Autostradali"), border=1)
+    pdf.cell(45, 8, pulisci("Calcolo Stimato"), border=1, align="C")
+    pdf.cell(40, 8, f"{dati['pedaggio']:.2f} EUR", border=1, align="R")
+    pdf.ln()
+
+    # Box Totali
+    y_tot = pdf.get_y() + 8
+    pdf.set_xy(105, y_tot)
+    pdf.set_fill_color(248, 249, 250)
+    pdf.rect(105, y_tot, 90, 36, "F")
+    pdf.set_draw_color(210, 215, 220)
+    pdf.rect(105, y_tot, 90, 36)
+
+    pdf.set_xy(110, y_tot + 4)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(45, 6, "Imponibile Totale:", ln=0)
+    pdf.cell(35, 6, f"{dati['imponibile']:.2f} EUR", ln=1, align="R")
+
+    pdf.set_xy(110, y_tot + 11)
+    pdf.cell(45, 6, "IVA (22%):", ln=0)
+    pdf.cell(35, 6, f"{dati['iva']:.2f} EUR", ln=1, align="R")
+
+    pdf.set_draw_color(180, 180, 180)
+    pdf.line(110, y_tot + 19, 190, y_tot + 19)
+
+    pdf.set_xy(110, y_tot + 22)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(26, 82, 118)
+    pdf.cell(45, 8, "TOTALE OFFERTA:", ln=0)
+    pdf.cell(35, 8, f"{dati['totale']:.2f} EUR", ln=1, align="R")
+
+    # Condizioni
+    pdf.set_xy(15, y_tot + 48)
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_text_color(100, 100, 100)
+    pdf.multi_cell(
+        180,
+        4,
+        pulisci(
+            "Offerta valida 30 giorni dalla data di emissione.\n"
+            "Prezzi calcolati sulla base delle tariffe chilometriche vigenti e stima pedaggi su circuito autostradale."
+        ),
     )
-
-    pdf.line(10, 60, 200, 60)
-
-    pdf.text(10, 70, "DETTAGLIO COSTI:")
-    pdf.text(10, 80, f"Distanza totale calcolata: {dati['km']} Km")
-    pdf.text(10, 87, f"Tariffa applicata: {dati['tariffa']} EUR / Km")
-    pdf.text(10, 94, f"Costo Viaggio: {dati['costo_viaggio']:.2f} EUR")
-    pdf.text(
-        10, 101, f"Pedaggi Autostradali Stimati: {dati['pedaggio']:.2f} EUR"
-    )
-
-    pdf.line(10, 110, 200, 110)
-
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.text(120, 125, f"Imponibile: {dati['imponibile']:.2f} EUR")
-    pdf.text(120, 135, f"IVA (22%): {dati['iva']:.2f} EUR")
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.text(120, 150, f"TOTALE: {dati['totale']:.2f} EUR")
 
     out = pdf.output(dest="S")
     return (
@@ -384,13 +468,13 @@ def crea_pdf_preventivo(dati):
 
 
 # ==========================================
-# 4. INTERFACCIA GRAFICA (Streamlit)
+# 5. INTERFACCIA GRAFICA (Streamlit)
 # ==========================================
-st.set_page_config(page_title="Gestionale Trasporti", layout="wide")
+st.set_page_config(page_title="Gestionale Trasporti B2B", layout="wide")
 st.title("🚛 Gestionale Trasporti - Pannello di Controllo")
 
 tab1, tab2, tab3 = st.tabs(
-    ["📄 Bolle di Trasporto", "💰 Preventivi Intelligenti", "🕒 Cronologia"]
+    ["📄 Bolle di Trasporto", "💰 Preventivi Intelligenti", "🕒 Cronologia Database"]
 )
 
 # ---------- TAB 1: BOLLE ----------
@@ -420,8 +504,14 @@ with tab1:
         container = c9.text_input("Numero Container", "ONEU 123456")
         peso = c10.text_input("Peso Merce (Kg)", "24000")
 
-        note = st.text_area("Note e Osservazioni di Viaggio", "Sigillo N. 987654. Nessuna anomalia riscontrata.")
-        note_committente = st.text_input("Istruzioni Speciali Committente", "Mantenere temperatura controllata / Consegna entro le ore 14:00")
+        note = st.text_area(
+            "Note e Osservazioni di Viaggio",
+            "Sigillo N. 987654. Nessuna anomalia riscontrata.",
+        )
+        note_committente = st.text_input(
+            "Istruzioni Speciali Committente",
+            "Mantenere temperatura controllata / Consegna entro le ore 14:00",
+        )
 
         invia_bolla = st.form_submit_button("Genera Bolla PDF", type="primary")
 
@@ -467,19 +557,36 @@ with tab2:
     partenza = col_p1.text_input("Città di Partenza", "La Spezia")
     arrivo = col_p2.text_input("Città di Arrivo", "Roma")
 
-    tipo_viaggio = st.radio(
+    col_p3, col_p4 = st.columns(2)
+    tipo_viaggio = col_p3.radio(
         "Tipologia Viaggio:",
         ["Solo Andata", "Andata e Ritorno"],
         horizontal=True,
     )
 
+    mezzo_sel = col_p4.selectbox(
+        "Tipologia Veicolo (Influisce sul Pedaggio):",
+        [
+            "Bilico / Autoarticolato 5 Assi (0.18 €/km)",
+            "Motrice 2/3 Assi (0.14 €/km)",
+            "Furgone / Mezzo Leggero (0.09 €/km)",
+        ],
+    )
+
+    # Estrai il costo pedaggio in base alla scelta
+    moltiplicatore_pedaggio = 0.18
+    if "Motrice" in mezzo_sel:
+        moltiplicatore_pedaggio = 0.14
+    elif "Furgone" in mezzo_sel:
+        moltiplicatore_pedaggio = 0.09
+
     tariffa = st.number_input("Tariffa al Km (€)", value=1.50, step=0.10)
 
     if st.button("📍 Calcola Percorso e Costi", type="primary"):
-        with st.spinner(
-            "Connessione ai satelliti di geolocalizzazione in corso..."
-        ):
-            km, pedaggio = calcola_distanza_api(partenza, arrivo)
+        with st.spinner("Calcolo percorso in corso via satelliti OSM..."):
+            km, pedaggio = calcola_distanza_api(
+                partenza, arrivo, moltiplicatore_pedaggio
+            )
 
             if km:
                 is_ritorno = tipo_viaggio == "Andata e Ritorno"
@@ -495,7 +602,7 @@ with tab2:
                 st.success("✅ Calcolo completato con successo!")
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Distanza Totale", f"{km} Km")
-                m2.metric("Pedaggio Stimato", f"{pedaggio} €")
+                m2.metric("Pedaggio Stimato", f"{pedaggio:.2f} €")
                 m3.metric("Totale (IVA inc.)", f"{totale:.2f} €")
 
                 dati_prev = {
@@ -503,6 +610,7 @@ with tab2:
                     "partenza": partenza,
                     "arrivo": arrivo,
                     "is_ritorno": is_ritorno,
+                    "tipo_mezzo": mezzo_sel.split("(")[0].strip(),
                     "km": km,
                     "tariffa": tariffa,
                     "costo_viaggio": costo_viaggio,
@@ -528,17 +636,18 @@ with tab2:
                 )
             else:
                 st.error(
-                    "⚠️ Non sono riuscito a trovare queste città. Controlla di averle scritte bene."
+                    "⚠️ Impossibile calcolare il percorso. Verifica l'ortografia delle città inserite."
                 )
 
-# ---------- TAB 3: CRONOLOGIA ----------
+# ---------- TAB 3: CRONOLOGIA DATABASE ----------
 with tab3:
-    st.subheader("Storico dei documenti generati")
-    if st.button("🔄 Aggiorna lista"):
+    st.subheader("Storico dei documenti generati (Database SQLite)")
+
+    if st.button("🔄 Aggiorna dati"):
         st.rerun()
 
-    storico = carica_cronologia()
-    if storico:
-        st.dataframe(storico, use_container_width=True)
+    df_storico = carica_cronologia()
+    if not df_storico.empty:
+        st.dataframe(df_storico, use_container_width=True)
     else:
-        st.info("Nessun documento creato finora. La cronologia è vuota.")
+        st.info("Nessun documento nel database. Genera un preventivo o una bolla per iniziare.")
