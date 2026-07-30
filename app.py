@@ -4,7 +4,7 @@ import sqlite3
 import pandas as pd
 import requests
 import streamlit as st
-from fpdf import fpdf
+from fpdf import FPDF
 
 # ==========================================
 # 1. DATABASE SQLITE & PULIZIA
