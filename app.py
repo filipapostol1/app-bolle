@@ -40,13 +40,12 @@ def init_db():
         )
     """)
 
-    # Aggiornamento automatico per vecchi DB
     try:
         cursor.execute(
             "ALTER TABLE cronologia ADD COLUMN user_id INTEGER DEFAULT 1"
         )
     except sqlite3.OperationalError:
-        pass  # La colonna esiste già
+        pass
 
     conn.commit()
     conn.close()
@@ -76,16 +75,13 @@ def registra_utente(username, password):
 
 
 def verifica_login(username, password):
-    """Verifica le credenziali (Include Account Master incancellabile)."""
+    """Verifica le credenziali (Include Account Master incancellabile admin / admin)."""
     user_clean = username.strip().lower()
-    
-    # ----------------------------------------------------
-    # ACCOUNT MASTER (Non viene mai cancellato dal server)
-    # ----------------------------------------------------
+
+    # Account Master fisso per non restare mai chiusi fuori dal Cloud
     if user_clean == "admin" and password == "admin":
         return (999, "Amministratore")
-    
-    # Verifica normale nel Database
+
     init_db()
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -95,7 +91,7 @@ def verifica_login(username, password):
     )
     user = cursor.fetchone()
     conn.close()
-    return user  
+    return user
 
 
 def carica_cronologia(user_id):
@@ -145,8 +141,17 @@ def pulisci(testo):
         return ""
     testo = str(testo).replace("€", "EUR").replace("°", " deg.")
     sostituzioni = {
-        "à": "a'", "è": "e'", "é": "e'", "ì": "i'", "ò": "o'", "ù": "u'",
-        "À": "A'", "È": "E'", "Ì": "I'", "Ò": "O'", "Ù": "U'",
+        "à": "a'",
+        "è": "e'",
+        "é": "e'",
+        "ì": "i'",
+        "ò": "o'",
+        "ù": "u'",
+        "À": "A'",
+        "È": "E'",
+        "Ì": "I'",
+        "Ò": "O'",
+        "Ù": "U'",
     }
     for orig, sost in sostituzioni.items():
         testo = testo.replace(orig, sost)
@@ -186,7 +191,7 @@ def calcola_distanza_api(partenza, arrivo, moltiplicatore_pedaggio=0.18):
 
 
 # ==========================================
-# 3. GENERAZIONE PDF BOLLA CMR
+# 3. GENERAZIONE PDF BOLLA CMR (REAL PEAK)
 # ==========================================
 class MioPDF(FPDF):
 
@@ -220,6 +225,7 @@ def crea_pdf_bolla(dati):
     pdf.add_page()
     pdf.set_auto_page_break(False)
 
+    # Intestazione Documento
     pdf.set_fill_color(26, 82, 118)
     pdf.rect(10, 10, 190, 16, "F")
 
@@ -246,6 +252,7 @@ def crea_pdf_bolla(dati):
         align="R",
     )
 
+    # Dati Generali
     pdf.disegna_cella_sezione(
         10, 28, 45, 12, "Data e Ora Ritiro", f"{dati['data']} - {dati['ora']}"
     )
@@ -266,14 +273,29 @@ def crea_pdf_bolla(dati):
         103, 41, 97, 22, "2. Vettore / Trasportatore", dati["vettore"]
     )
 
+    # =========================================================================
+    # MODIFICA 1: SEZIONE 3 DIVISA CON 2 LINEE VERTICALI (Luogo | Data | Ora)
+    # =========================================================================
     pdf.disegna_cella_sezione(
-        10,
-        64,
-        93,
-        22,
-        "3. Luogo di Carico / Terminal Ritiro",
-        dati["ritiro"],
+        10, 64, 53, 22, "3. Luogo di Carico / Terminal", dati["ritiro"]
     )
+    pdf.disegna_cella_sezione(
+        63,
+        64,
+        20,
+        22,
+        "Data Carico",
+        dati.get("data_carico", dati.get("data", "")),
+    )
+    pdf.disegna_cella_sezione(
+        83,
+        64,
+        20,
+        22,
+        "Ora Carico",
+        dati.get("ora_carico", dati.get("ora", "")),
+    )
+
     info_mezzo = (
         f"Autista: {dati['autista']}\n"
         f"Trattore: {dati['trattore']}  |  Rimorchio: {dati['rimorchio']}"
@@ -282,9 +304,19 @@ def crea_pdf_bolla(dati):
         103, 64, 97, 22, "4. Conducente & Automezzo", info_mezzo
     )
 
+    # =========================================================================
+    # MODIFICA 1: SEZIONE 5 DIVISA CON 2 LINEE VERTICALI (Luogo | Data | Ora)
+    # =========================================================================
     pdf.disegna_cella_sezione(
-        10, 87, 93, 22, "5. Luogo di Consegna / Scarico", dati["scarico"]
+        10, 87, 53, 22, "5. Luogo di Scarico / Consegna", dati["scarico"]
     )
+    pdf.disegna_cella_sezione(
+        63, 87, 20, 22, "Data Scarico", dati.get("data_scarico", "")
+    )
+    pdf.disegna_cella_sezione(
+        83, 87, 20, 22, "Ora Scarico", dati.get("ora_scarico", "")
+    )
+
     info_cnt = (
         f"Sigla/N° Container: {dati['container']}\n"
         f"Peso Lordo (Kg): {dati['peso']}"
@@ -310,6 +342,7 @@ def crea_pdf_bolla(dati):
         dati["note"],
     )
 
+    # Condizioni e Direttive
     pdf.set_fill_color(245, 245, 245)
     pdf.rect(10, 155, 190, 80)
     pdf.set_line_width(0.3)
@@ -357,21 +390,49 @@ def crea_pdf_bolla(dati):
     )
     pdf.multi_cell(184, 3.2, pulisci(istruzioni_extra), border=0, align="L")
 
+    # =========================================================================
+    # MODIFICA 2: LE 3 CASELLE DI FIRMA CON IL CAMPO "ORA" DEDICATO IN BASSO
+    # =========================================================================
     h_firme, y_firme = 38, 238
-    pdf.rect(10, y_firme, 60, h_firme)
-    pdf.set_xy(12, y_firme + 2)
-    pdf.set_font("Helvetica", "B", 7)
-    pdf.cell(56, 3, pulisci("Firma Mittente / Caricatore"), align="C", ln=1)
+    box_x = [10, 75, 140]
+    titoli_firma = [
+        "Firma Mittente / Caricatore",
+        "Firma Vettore / Conducente",
+        "Firma Destinatario",
+    ]
 
-    pdf.rect(75, y_firme, 60, h_firme)
-    pdf.set_xy(77, y_firme + 2)
-    pdf.set_font("Helvetica", "B", 7)
-    pdf.cell(56, 3, pulisci("Firma Vettore / Conducente"), align="C", ln=1)
+    for x_pos, titolo in zip(box_x, titoli_firma):
+        # Casella principale
+        pdf.set_line_width(0.3)
+        pdf.set_draw_color(60, 60, 60)
+        pdf.rect(x_pos, y_firme, 60, h_firme)
 
-    pdf.rect(140, y_firme, 60, h_firme)
-    pdf.set_xy(142, y_firme + 2)
-    pdf.set_font("Helvetica", "B", 7)
-    pdf.cell(56, 3, pulisci("Firma Destinatario"), align="C", ln=1)
+        # Intestazione casella firma
+        pdf.set_fill_color(240, 242, 245)
+        pdf.rect(x_pos, y_firme, 60, 5, "F")
+        pdf.line(x_pos, y_firme + 5, x_pos + 60, y_firme + 5)
+
+        pdf.set_xy(x_pos, y_firme + 1)
+        pdf.set_font("Helvetica", "B", 7)
+        pdf.set_text_color(50, 50, 50)
+        pdf.cell(60, 3, pulisci(titolo), align="C", ln=1)
+
+        # Linea divisoria orizzontale in basso per separare l'area ORA
+        y_linea_ora = y_firme + h_firme - 8
+        pdf.set_draw_color(130, 130, 130)
+        pdf.line(x_pos, y_linea_ora, x_pos + 60, y_linea_ora)
+
+        # Campo "ORA: ............" in basso
+        pdf.set_xy(x_pos + 2, y_linea_ora + 2)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(40, 40, 40)
+        pdf.cell(
+            56,
+            4,
+            pulisci("ORA: ............................................"),
+            align="L",
+            ln=0,
+        )
 
     out = pdf.output(dest="S")
     return (
@@ -496,7 +557,6 @@ st.set_page_config(
 )
 init_db()
 
-# Inizializza variabili di sessione
 if "autenticato" not in st.session_state:
     st.session_state["autenticato"] = False
 if "user_id" not in st.session_state:
@@ -530,7 +590,7 @@ if not st.session_state["autenticato"]:
                     st.success("Accesso effettuato!")
                     st.rerun()
                 else:
-                    st.error("Credenziali errate o account non trovato. Riprova.")
+                    st.error("Credenziali errate o account non trovato.")
 
         else:
             st.subheader("Crea un Account Aziendale")
@@ -554,7 +614,6 @@ if not st.session_state["autenticato"]:
 
 # --- APP PRINCIPALE (DOPO IL LOGIN) ---
 else:
-    # Sidebar con info utente e Logout
     st.sidebar.title(f"👤 {st.session_state['username'].capitalize()}")
     st.sidebar.caption("Account Aziendale Attivo")
 
@@ -568,13 +627,13 @@ else:
 
     tab1, tab2, tab3 = st.tabs(
         [
-            "📄 Bolle di Trasporto",
+            "📄 Bolle di Trasporto (CMR)",
             "💰 Preventivi Intelligenti",
             "🕒 Tua Cronologia Riservata",
         ]
     )
 
-    # TAB 1: BOLLE CMR
+    # TAB 1: BOLLE CMR CON SEZIONI ESTESE
     with tab1:
         st.subheader("Crea nuova Lettera di Vettura (CMR)")
         with st.form("form_bolla"):
@@ -590,10 +649,21 @@ else:
             )
             committente = c5.text_input("Committente / Cliente", "Cliente Srl")
 
-            ritiro = st.text_input(
-                "Term. Ritiro / Carico", "LA SPEZIA CONTAINER TRML"
+            # Sezione 3 divisa nel modulo
+            c_r1, c_r2, c_r3 = st.columns([2, 1, 1])
+            ritiro = c_r1.text_input(
+                "3. Luogo di Carico", "LA SPEZIA CONTAINER TRML"
             )
-            scarico = st.text_input("Luogo Scarico", "Magazzino Milano")
+            data_carico = c_r2.text_input("Data Carico", data_b)
+            ora_carico = c_r3.text_input("Ora Carico", ora_b)
+
+            # Sezione 5 divisa nel modulo
+            c_s1, c_s2, c_s3 = st.columns([2, 1, 1])
+            scarico = c_s1.text_input(
+                "5. Luogo di Scarico", "Magazzino Milano"
+            )
+            data_scarico = c_s2.text_input("Data Scarico (opz.)", "")
+            ora_scarico = c_s3.text_input("Ora Scarico (opz.)", "")
 
             c6, c7, c8 = st.columns(3)
             autista = c6.text_input("Autista", "Mario Rossi")
@@ -627,7 +697,11 @@ else:
                 "booking": "BK-908123",
                 "committente": committente,
                 "ritiro": ritiro,
+                "data_carico": data_carico,
+                "ora_carico": ora_carico,
                 "scarico": scarico,
+                "data_scarico": data_scarico,
+                "ora_scarico": ora_scarico,
                 "merce": "MERCE VARIA SU PALLET",
                 "vettore": vettore,
                 "autista": autista,
@@ -743,7 +817,7 @@ else:
                         "⚠️ Impossibile calcolare il percorso. Verifica i nomi delle città."
                     )
 
-    # TAB 3: CRONOLOGIA RISERVATA
+    # TAB 3: CRONOLOGIA
     with tab3:
         st.subheader("I tuoi documenti salvati")
 
