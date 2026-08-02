@@ -175,7 +175,7 @@ def calcola_distanza_api(partenza, arrivo, moltiplicatore_pedaggio=0.18):
 # ==========================================
 class MioPDF(FPDF):
 
-    def disegna_cella_sezione(self, x, y, w, h, titolo, valore="", bg_hdr=True, text_w=None):
+    def disegna_cella_sezione(self, x, y, w, h, titolo, valore="", bg_hdr=True):
         self.set_line_width(0.3)
         self.set_draw_color(60, 60, 60)
         self.rect(x, y, w, h)
@@ -194,9 +194,28 @@ class MioPDF(FPDF):
             self.set_xy(x + 2, y + 5.5)
             self.set_font("Helvetica", "B", 8.5)
             self.set_text_color(0, 0, 0)
+            self.multi_cell(w - 4, 3.8, pulisci(valore), border=0, align="L")
             
-            width = text_w if text_w else (w - 4)
-            self.multi_cell(width, 3.8, pulisci(valore), border=0, align="L")
+    def disegna_firma_orari(self, x, y, w, h, titolo):
+        self.rect(x, y, w, h)
+        # Titolo firma
+        self.set_xy(x, y + 2)
+        self.set_font("Helvetica", "B", 7)
+        self.cell(w, 3, pulisci(titolo), align="C", ln=1)
+        
+        # Griglia Orari in basso
+        y_grid = y + h - 8
+        self.set_draw_color(60, 60, 60)
+        self.line(x, y_grid, x + w, y_grid) # linea orizzontale
+        self.line(x + (w/2), y_grid, x + (w/2), y + h) # linea verticale
+        
+        self.set_font("Helvetica", "I", 6.5)
+        self.set_text_color(100, 100, 100)
+        self.set_xy(x, y_grid + 0.5)
+        self.cell(w/2, 3, "Ora Arrivo:", align="C")
+        self.set_xy(x + (w/2), y_grid + 0.5)
+        self.cell(w/2, 3, "Ora Part.:", align="C")
+        self.set_text_color(0, 0, 0)
 
 
 def crea_pdf_bolla(dati, logo_path=None):
@@ -207,7 +226,7 @@ def crea_pdf_bolla(dati, logo_path=None):
 
     # Intestazione Blu
     pdf.set_fill_color(26, 82, 118)
-    pdf.rect(10, 10, 190, 16, "F")
+    pdf.rect(10, 10, 190, 18, "F") # Leggermente più alta per far spazio alla p.iva
 
     offset_x = 12
     w_title = 100
@@ -216,33 +235,38 @@ def crea_pdf_bolla(dati, logo_path=None):
     if logo_path and os.path.exists(logo_path):
         try:
             pdf.set_fill_color(255, 255, 255)
-            pdf.rect(10, 10, 45, 16, "F")
+            pdf.rect(10, 10, 45, 18, "F")
             pdf.set_draw_color(26, 82, 118)
-            pdf.rect(10, 10, 45, 16) 
+            pdf.rect(10, 10, 45, 18) 
             
-            pdf.image(logo_path, 12, 11, h=14)
+            pdf.image(logo_path, 12, 11, h=16)
             offset_x = 58
             w_title = 54
         except Exception:
             pass
 
     # Nome Vettore
-    pdf.set_xy(offset_x, 12)
-    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_xy(offset_x, 11)
+    pdf.set_font("Helvetica", "B", 12)
     pdf.set_text_color(255, 255, 255)
-    pdf.cell(w_title, 6, pulisci(dati["vettore"]), ln=0, align="L")
+    pdf.cell(w_title, 5, pulisci(dati["vettore"]), ln=0, align="L")
+    
+    # Dati Aziendali (P.IVA ecc)
+    pdf.set_xy(offset_x, 16.5)
+    pdf.set_font("Helvetica", "", 7.5)
+    pdf.cell(w_title, 4, pulisci(dati.get("dati_azienda", "")), ln=0, align="L")
+
+    # Sottotitolo
+    pdf.set_xy(offset_x, 22)
+    pdf.set_font("Helvetica", "", 7)
+    pdf.cell(w_title, 4, "DOCUMENTO DI TRASPORTO MERCI SU STRADA", ln=0, align="L")
 
     # Titolo Bolla
     pdf.set_xy(110, 12)
     pdf.set_font("Helvetica", "B", 13)
     pdf.cell(88, 6, "LETTERA DI VETTURA / BOLLA", ln=1, align="R")
 
-    # Sottotitolo e Dati
-    pdf.set_xy(offset_x, 18.5)
-    pdf.set_font("Helvetica", "", 8)
-    pdf.cell(w_title, 5, "DOCUMENTO DI TRASPORTO MERCI SU STRADA", ln=0, align="L")
-
-    pdf.set_xy(110, 18.5)
+    pdf.set_xy(110, 20)
     pdf.set_font("Helvetica", "B", 9)
     pdf.cell(
         88,
@@ -252,80 +276,52 @@ def crea_pdf_bolla(dati, logo_path=None):
         align="R",
     )
 
-    pdf.disegna_cella_sezione(10, 28, 45, 12, "Data e Ora Ritiro", f"{dati['data']} - {dati['ora']}")
-    pdf.disegna_cella_sezione(55, 28, 45, 12, "Riferimento Doc.", dati.get("rif", "N/A"))
-    pdf.disegna_cella_sezione(100, 28, 45, 12, "Compagnia Navale", dati.get("compagnia", "N/A"))
-    pdf.disegna_cella_sezione(145, 28, 55, 12, "Booking / Riferimento", dati.get("booking", "N/A"))
+    pdf.disegna_cella_sezione(10, 30, 45, 12, "Data e Ora Ritiro", f"{dati['data']} - {dati['ora']}")
+    pdf.disegna_cella_sezione(55, 30, 45, 12, "Riferimento Doc.", dati.get("rif", "N/A"))
+    pdf.disegna_cella_sezione(100, 30, 45, 12, "Compagnia Navale", dati.get("compagnia", "N/A"))
+    pdf.disegna_cella_sezione(145, 30, 55, 12, "Booking / Riferimento", dati.get("booking", "N/A"))
 
-    pdf.disegna_cella_sezione(10, 41, 93, 22, "1. Committente / Mittente", dati["committente"])
-    pdf.disegna_cella_sezione(103, 41, 97, 22, "2. Vettore / Trasportatore", dati["vettore"])
+    pdf.disegna_cella_sezione(10, 43, 93, 22, "1. Committente / Mittente", dati["committente"])
+    pdf.disegna_cella_sezione(103, 43, 97, 22, "2. Vettore / Trasportatore", dati["vettore"])
 
-    # Riquadro 3 con tempi attesa
-    pdf.disegna_cella_sezione(10, 64, 93, 22, "3. Luogo di Carico / Terminal Ritiro", dati["ritiro"], text_w=51)
-    pdf.set_draw_color(150, 150, 150)
-    pdf.line(63, 69, 63, 86)
-    pdf.line(83, 69, 83, 86)
-    pdf.set_font("Helvetica", "I", 6.5)
-    pdf.set_text_color(100, 100, 100)
-    pdf.set_xy(63, 69.5)
-    pdf.cell(20, 3, "Ora Arrivo:", align="C")
-    pdf.set_xy(83, 69.5)
-    pdf.cell(20, 3, "Ora Part.:", align="C")
-    
-    # Scrittura orari di ritiro se inseriti
-    pdf.set_font("Helvetica", "B", 9)
-    pdf.set_text_color(0, 0, 0)
-    if dati.get("ora_arr_rit"):
-        pdf.set_xy(63, 75)
-        pdf.cell(20, 5, pulisci(dati["ora_arr_rit"]), align="C")
-    if dati.get("ora_part_rit"):
-        pdf.set_xy(83, 75)
-        pdf.cell(20, 5, pulisci(dati["ora_part_rit"]), align="C")
+    # COMPOSIZIONE RITIRI (Fino a 3)
+    ritiri = [r for r in [dati.get("r1"), dati.get("r2"), dati.get("r3")] if r]
+    if len(ritiri) > 1:
+        testo_ritiri = "\n".join([f"{i+1}) {r}" for i, r in enumerate(ritiri)])
+    else:
+        testo_ritiri = ritiri[0] if ritiri else ""
+        
+    pdf.disegna_cella_sezione(10, 66, 93, 22, "3. Luoghi di Carico / Terminal Ritiro", testo_ritiri)
 
-    # Riquadro 4
     info_mezzo = f"Autista: {dati['autista']}\nTrattore: {dati['trattore']}  |  Rimorchio: {dati['rimorchio']}"
-    pdf.disegna_cella_sezione(103, 64, 97, 22, "4. Conducente & Automezzo", info_mezzo)
+    pdf.disegna_cella_sezione(103, 66, 97, 22, "4. Conducente & Automezzo", info_mezzo)
 
-    # Riquadro 5 con tempi attesa
-    pdf.disegna_cella_sezione(10, 87, 93, 22, "5. Luogo di Consegna / Scarico", dati["scarico"], text_w=51)
-    pdf.set_draw_color(150, 150, 150)
-    pdf.line(63, 92, 63, 109)
-    pdf.line(83, 92, 83, 109)
-    pdf.set_font("Helvetica", "I", 6.5)
-    pdf.set_text_color(100, 100, 100)
-    pdf.set_xy(63, 92.5)
-    pdf.cell(20, 3, "Ora Arrivo:", align="C")
-    pdf.set_xy(83, 92.5)
-    pdf.cell(20, 3, "Ora Part.:", align="C")
-    
-    # Scrittura orari di scarico se inseriti
-    pdf.set_font("Helvetica", "B", 9)
-    pdf.set_text_color(0, 0, 0)
-    if dati.get("ora_arr_sca"):
-        pdf.set_xy(63, 98)
-        pdf.cell(20, 5, pulisci(dati["ora_arr_sca"]), align="C")
-    if dati.get("ora_part_sca"):
-        pdf.set_xy(83, 98)
-        pdf.cell(20, 5, pulisci(dati["ora_part_sca"]), align="C")
+    # COMPOSIZIONE SCARICHI (Fino a 3)
+    scarichi = [s for s in [dati.get("s1"), dati.get("s2"), dati.get("s3")] if s]
+    if len(scarichi) > 1:
+        testo_scarichi = "\n".join([f"{i+1}) {s}" for i, s in enumerate(scarichi)])
+    else:
+        testo_scarichi = scarichi[0] if scarichi else ""
+        
+    pdf.disegna_cella_sezione(10, 89, 93, 22, "5. Luoghi di Consegna / Scarico", testo_scarichi)
 
-    # Riquadro 6
     info_cnt = f"Sigla/N deg. Container: {dati['container']}\nPeso Lordo (Kg): {dati['peso']}"
-    pdf.disegna_cella_sezione(103, 87, 97, 22, "6. Identificativo Container & Peso", info_cnt)
+    pdf.disegna_cella_sezione(103, 89, 97, 22, "6. Identificativo Container & Peso", info_cnt)
 
-    pdf.disegna_cella_sezione(10, 110, 190, 20, "7. Natura della Merce e Tipologia Imballo", dati["merce"])
-    pdf.disegna_cella_sezione(10, 131, 190, 22, "8. Note operative / Riserve del Vettore all'Atto del Carico", dati["note"])
+    pdf.disegna_cella_sezione(10, 112, 190, 20, "7. Natura della Merce e Tipologia Imballo", dati["merce"])
+    pdf.disegna_cella_sezione(10, 133, 190, 22, "8. Note operative / Riserve del Vettore all'Atto del Carico", dati["note"])
 
     pdf.set_fill_color(245, 245, 245)
-    pdf.rect(10, 155, 190, 80)
+    pdf.rect(10, 157, 190, 78)
     pdf.set_line_width(0.3)
     pdf.set_draw_color(60, 60, 60)
-    pdf.rect(10, 155, 190, 80)
+    pdf.rect(10, 157, 190, 78)
 
-    pdf.set_xy(13, 157)
+    pdf.set_xy(13, 159)
     pdf.set_font("Helvetica", "B", 8)
     pdf.set_text_color(26, 82, 118)
     pdf.cell(184, 4, pulisci("DIRETTIVE, ISTRUZIONI DI TRASPORTO E CONDIZIONI GENERALI"), ln=1)
-    pdf.line(13, 162, 197, 162)
+    pdf.line(13, 164, 197, 164)
 
     pdf.set_font("Helvetica", "", 6.8)
     pdf.set_text_color(40, 40, 40)
@@ -336,7 +332,7 @@ def crea_pdf_bolla(dati, logo_path=None):
         "3. SOSTE E PERCORSI: Il trasporto deve avvenire nel rispetto dei tempi di guida e di riposo (Regolamento CE 561/2006).\n"
         "4. RESA E CONSEGNA: La merce viaggia a rischio del committente salvo i casi di responsabilita' imputabile al vettore ai sensi di legge."
     )
-    pdf.set_xy(13, 164)
+    pdf.set_xy(13, 166)
     pdf.multi_cell(184, 3.2, pulisci(direttive_testo), border=0, align="J")
 
     pdf.set_xy(13, 202)
@@ -349,41 +345,18 @@ def crea_pdf_bolla(dati, logo_path=None):
     istruzioni_extra = dati.get("note_committente") if dati.get("note_committente") else "Nessuna istruzione particolare specificata."
     pdf.multi_cell(184, 3.2, pulisci(istruzioni_extra), border=0, align="L")
 
+    # Nuovi Box Firme con Orari integrati
     h_firme, y_firme = 38, 238
-    
-    # Firma 1
-    pdf.rect(10, y_firme, 60, h_firme)
-    pdf.set_xy(10, y_firme + 2)
-    pdf.set_font("Helvetica", "B", 7)
-    pdf.cell(60, 3, pulisci("Firma Mittente / Caricatore"), align="C", ln=1)
-    pdf.line(10, y_firme + 28, 70, y_firme + 28)
-    pdf.set_xy(10, y_firme + 30)
-    pdf.cell(60, 4, "Ora: ...........................", align="C")
-
-    # Firma 2
-    pdf.rect(75, y_firme, 60, h_firme)
-    pdf.set_xy(75, y_firme + 2)
-    pdf.set_font("Helvetica", "B", 7)
-    pdf.cell(60, 3, pulisci("Firma Vettore / Conducente"), align="C", ln=1)
-    pdf.line(75, y_firme + 28, 135, y_firme + 28)
-    pdf.set_xy(75, y_firme + 30)
-    pdf.cell(60, 4, "Ora: ...........................", align="C")
-
-    # Firma 3
-    pdf.rect(140, y_firme, 60, h_firme)
-    pdf.set_xy(140, y_firme + 2)
-    pdf.set_font("Helvetica", "B", 7)
-    pdf.cell(60, 3, pulisci("Firma Destinatario"), align="C", ln=1)
-    pdf.line(140, y_firme + 28, 200, y_firme + 28)
-    pdf.set_xy(140, y_firme + 30)
-    pdf.cell(60, 4, "Ora: ...........................", align="C")
+    pdf.disegna_firma_orari(10, y_firme, 60, h_firme, "Firma Mittente / Caricatore")
+    pdf.disegna_firma_orari(75, y_firme, 60, h_firme, "Firma Vettore / Conducente")
+    pdf.disegna_firma_orari(140, y_firme, 60, h_firme, "Firma Destinatario")
 
     out = pdf.output(dest="S")
     return bytes(out) if isinstance(out, (bytes, bytearray)) else out.encode("latin-1")
 
 
 # ==========================================
-# 4. GENERAZIONE PDF PREVENTIVO
+# 4. GENERAZIONE PDF PREVENTIVO (INVARIATO)
 # ==========================================
 def crea_pdf_preventivo(dati, logo_path=None):
     pdf = FPDF(orientation="P", unit="mm", format="A4")
@@ -395,7 +368,6 @@ def crea_pdf_preventivo(dati, logo_path=None):
 
     offset_x = 20
     
-    # GESTIONE LOGO
     if logo_path and os.path.exists(logo_path):
         try:
             pdf.set_fill_color(255, 255, 255)
@@ -591,23 +563,28 @@ else:
             num_doc = c1.text_input("Numero Documento", "2026-001")
             data_b = c2.text_input("Data", datetime.now().strftime("%d/%m/%Y"))
             ora_b = c3.text_input("Ora", "08:00")
-
+            
+            st.markdown("---")
             c4, c5 = st.columns(2)
             vettore = c4.text_input("Nome Tua Azienda (Vettore)", st.session_state["username"].upper())
+            dati_azienda = c4.text_input("Dati Aziendali (P.IVA, Indirizzo, ecc.)", "P.IVA: _______________ - Sede: _______________", help="Apparirà in alto a sinistra sotto il logo")
+            
             committente = c5.text_input("Committente / Cliente", "Cliente Srl")
 
-            # --- MODIFICA: Inserimento Orari Ritiro ---
-            c_rit1, c_rit2, c_rit3 = st.columns([2, 1, 1])
-            ritiro = c_rit1.text_input("Term. Ritiro / Carico", "LA SPEZIA CONTAINER TRML")
-            ora_arr_rit = c_rit2.text_input("Ora Arrivo (Carico)", "", help="Lascia vuoto per far compilare a penna l'autista")
-            ora_part_rit = c_rit3.text_input("Ora Partenza (Carico)", "", help="Lascia vuoto per far compilare a penna l'autista")
+            st.markdown("---")
+            st.markdown("**📍 Luoghi di Ritiro (Carico)**")
+            c_rit1, c_rit2, c_rit3 = st.columns(3)
+            r1 = c_rit1.text_input("1. Ritiro Principale", "LA SPEZIA CONTAINER TRML")
+            r2 = c_rit2.text_input("2. Ritiro (Opzionale)", "")
+            r3 = c_rit3.text_input("3. Ritiro (Opzionale)", "")
 
-            # --- MODIFICA: Inserimento Orari Scarico ---
-            c_sca1, c_sca2, c_sca3 = st.columns([2, 1, 1])
-            scarico = c_sca1.text_input("Luogo Scarico", "Magazzino Milano")
-            ora_arr_sca = c_sca2.text_input("Ora Arrivo (Scarico)", "", help="Lascia vuoto per far compilare a penna l'autista")
-            ora_part_sca = c_sca3.text_input("Ora Partenza (Scarico)", "", help="Lascia vuoto per far compilare a penna l'autista")
+            st.markdown("**📍 Luoghi di Consegna (Scarico)**")
+            c_sca1, c_sca2, c_sca3 = st.columns(3)
+            s1 = c_sca1.text_input("1. Scarico Principale", "Magazzino Milano")
+            s2 = c_sca2.text_input("2. Scarico (Opzionale)", "")
+            s3 = c_sca3.text_input("3. Scarico (Opzionale)", "")
 
+            st.markdown("---")
             c6, c7, c8 = st.columns(3)
             autista = c6.text_input("Autista", "Mario Rossi")
             trattore = c7.text_input("Targa Trattore", "AA123BB")
@@ -626,14 +603,15 @@ else:
             dati_b = {
                 "num_doc": num_doc, "data": data_b, "ora": ora_b, "rif": "Rif. Ordine #9982",
                 "compagnia": "MSC / ONE", "booking": "BK-908123", "committente": committente,
-                "ritiro": ritiro, "ora_arr_rit": ora_arr_rit, "ora_part_rit": ora_part_rit,
-                "scarico": scarico, "ora_arr_sca": ora_arr_sca, "ora_part_sca": ora_part_sca,
+                "vettore": vettore, "dati_azienda": dati_azienda, 
+                "r1": r1, "r2": r2, "r3": r3,
+                "s1": s1, "s2": s2, "s3": s3,
                 "merce": "MERCE VARIA SU PALLET",
-                "vettore": vettore, "autista": autista, "trattore": trattore, "rimorchio": rimorchio,
+                "autista": autista, "trattore": trattore, "rimorchio": rimorchio,
                 "container": container, "peso": peso, "note": note, "note_committente": note_committente,
             }
             pdf_bytes = crea_pdf_bolla(dati_b, st.session_state["logo_path"])
-            salva_cronologia(st.session_state["user_id"], "Bolla Creata", committente, f"Scarico a {scarico}")
+            salva_cronologia(st.session_state["user_id"], "Bolla Creata", committente, f"Scarico a {s1}")
             st.success("✅ Lettera di vettura (CMR) generata con successo!")
             st.download_button("📥 Scarica Bolla PDF", data=pdf_bytes, file_name=f"Bolla_{num_doc}.pdf", mime="application/pdf")
 
