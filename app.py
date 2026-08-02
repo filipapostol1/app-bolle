@@ -215,13 +215,11 @@ def crea_pdf_bolla(dati, logo_path=None):
     # GESTIONE LOGO
     if logo_path and os.path.exists(logo_path):
         try:
-            # Crea un riquadro bianco elegante per il logo
             pdf.set_fill_color(255, 255, 255)
             pdf.rect(10, 10, 45, 16, "F")
             pdf.set_draw_color(26, 82, 118)
             pdf.rect(10, 10, 45, 16) 
             
-            # Inserisce il logo centrato verticalmente
             pdf.image(logo_path, 12, 11, h=14)
             offset_x = 58
             w_title = 54
@@ -273,6 +271,16 @@ def crea_pdf_bolla(dati, logo_path=None):
     pdf.cell(20, 3, "Ora Arrivo:", align="C")
     pdf.set_xy(83, 69.5)
     pdf.cell(20, 3, "Ora Part.:", align="C")
+    
+    # Scrittura orari di ritiro se inseriti
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(0, 0, 0)
+    if dati.get("ora_arr_rit"):
+        pdf.set_xy(63, 75)
+        pdf.cell(20, 5, pulisci(dati["ora_arr_rit"]), align="C")
+    if dati.get("ora_part_rit"):
+        pdf.set_xy(83, 75)
+        pdf.cell(20, 5, pulisci(dati["ora_part_rit"]), align="C")
 
     # Riquadro 4
     info_mezzo = f"Autista: {dati['autista']}\nTrattore: {dati['trattore']}  |  Rimorchio: {dati['rimorchio']}"
@@ -289,6 +297,16 @@ def crea_pdf_bolla(dati, logo_path=None):
     pdf.cell(20, 3, "Ora Arrivo:", align="C")
     pdf.set_xy(83, 92.5)
     pdf.cell(20, 3, "Ora Part.:", align="C")
+    
+    # Scrittura orari di scarico se inseriti
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(0, 0, 0)
+    if dati.get("ora_arr_sca"):
+        pdf.set_xy(63, 98)
+        pdf.cell(20, 5, pulisci(dati["ora_arr_sca"]), align="C")
+    if dati.get("ora_part_sca"):
+        pdf.set_xy(83, 98)
+        pdf.cell(20, 5, pulisci(dati["ora_part_sca"]), align="C")
 
     # Riquadro 6
     info_cnt = f"Sigla/N deg. Container: {dati['container']}\nPeso Lordo (Kg): {dati['peso']}"
@@ -578,8 +596,17 @@ else:
             vettore = c4.text_input("Nome Tua Azienda (Vettore)", st.session_state["username"].upper())
             committente = c5.text_input("Committente / Cliente", "Cliente Srl")
 
-            ritiro = st.text_input("Term. Ritiro / Carico", "LA SPEZIA CONTAINER TRML")
-            scarico = st.text_input("Luogo Scarico", "Magazzino Milano")
+            # --- MODIFICA: Inserimento Orari Ritiro ---
+            c_rit1, c_rit2, c_rit3 = st.columns([2, 1, 1])
+            ritiro = c_rit1.text_input("Term. Ritiro / Carico", "LA SPEZIA CONTAINER TRML")
+            ora_arr_rit = c_rit2.text_input("Ora Arrivo (Carico)", "", help="Lascia vuoto per far compilare a penna l'autista")
+            ora_part_rit = c_rit3.text_input("Ora Partenza (Carico)", "", help="Lascia vuoto per far compilare a penna l'autista")
+
+            # --- MODIFICA: Inserimento Orari Scarico ---
+            c_sca1, c_sca2, c_sca3 = st.columns([2, 1, 1])
+            scarico = c_sca1.text_input("Luogo Scarico", "Magazzino Milano")
+            ora_arr_sca = c_sca2.text_input("Ora Arrivo (Scarico)", "", help="Lascia vuoto per far compilare a penna l'autista")
+            ora_part_sca = c_sca3.text_input("Ora Partenza (Scarico)", "", help="Lascia vuoto per far compilare a penna l'autista")
 
             c6, c7, c8 = st.columns(3)
             autista = c6.text_input("Autista", "Mario Rossi")
@@ -599,7 +626,9 @@ else:
             dati_b = {
                 "num_doc": num_doc, "data": data_b, "ora": ora_b, "rif": "Rif. Ordine #9982",
                 "compagnia": "MSC / ONE", "booking": "BK-908123", "committente": committente,
-                "ritiro": ritiro, "scarico": scarico, "merce": "MERCE VARIA SU PALLET",
+                "ritiro": ritiro, "ora_arr_rit": ora_arr_rit, "ora_part_rit": ora_part_rit,
+                "scarico": scarico, "ora_arr_sca": ora_arr_sca, "ora_part_sca": ora_part_sca,
+                "merce": "MERCE VARIA SU PALLET",
                 "vettore": vettore, "autista": autista, "trattore": trattore, "rimorchio": rimorchio,
                 "container": container, "peso": peso, "note": note, "note_committente": note_committente,
             }
